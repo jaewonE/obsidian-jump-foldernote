@@ -1,10 +1,10 @@
 {
 	"id": "obsidian-jump-to-foldernote",
 	"name": "Jump to Foldernote",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "0.15.0",
 	"description": "Obsidian plugin to jump to a foldernote by chceking foldernote has tags with #HOC",
-	"author": "Obsidian",
+	"author": "JaewonE",
 	"authorUrl": "https://obsidian.md",
 	"fundingUrl": "https://obsidian.md/pricing",
 	"isDesktopOnly": true

@@ -49,17 +49,20 @@ export default class FindProjectNotePlugin extends Plugin {
 
 	async openFindingNote(type: TagType) {
 		const activeFile = this.app.workspace.getActiveFile();
-		let curFileHasType = false;
 		if (!activeFile) {
 			return; // 활성 파일이 없는 경우 종료
 		}
 
-		const pathParts = activeFile.path.split("/");
-
 		// @ts-ignore
 		const __dirname = this.app.vault.adapter.basePath;
+		const pathParts = activeFile.path.split("/");
+		const pathPartsLastIndex = pathParts.length - 1;
+		// new Notice(`pathParts: ${pathParts}`, 5000);
 
-		for (let i = pathParts.length - 1; i >= 0; i--) {
+		for (let i = pathPartsLastIndex; i >= 0; i--) {
+			if (i === 0) {
+				break;
+			}
 			const filename = `${pathParts[i - 1]}.md`;
 			const projectNote =
 				pathParts.slice(0, i).join("/") + `/${filename}`;
@@ -74,12 +77,11 @@ export default class FindProjectNotePlugin extends Plugin {
 				// new Notice(`isFolderNote: ${isFolderNote}`, 5000);
 
 				if (
-					pathParts.length - 1 === i &&
-					filename === pathParts[pathParts.length - 1] &&
+					pathPartsLastIndex === i &&
+					filename === pathParts[pathPartsLastIndex] &&
 					isFolderNote
 				) {
 					// new Notice(`Current file is project note: ${projectNote}`,5000);
-					curFileHasType = true;
 					continue;
 				}
 
@@ -91,16 +93,17 @@ export default class FindProjectNotePlugin extends Plugin {
 			}
 		}
 
-		if (!curFileHasType) {
-			const readmePath = `${__dirname}/README.md`;
-			if (fs.existsSync(readmePath)) {
-				this.app.workspace.openLinkText(readmePath, "/", false);
-			} else {
-				new Notice(
-					`Project note with ${this.settings.HocTag} tag not found in the tags property.`,
-					3000
-				);
-			}
+		await this.goReadme(__dirname, type);
+	}
+
+	async goReadme(dirname: string, type: TagType = TagType.HOC) {
+		if (fs.existsSync(`${dirname}/README.md`)) {
+			this.app.workspace.openLinkText("README.md", "/", false);
+		} else {
+			new Notice(
+				`Project note with ${type} tag not found in the tags property.`,
+				3000
+			);
 		}
 	}
 
