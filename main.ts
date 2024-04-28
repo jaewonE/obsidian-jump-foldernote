@@ -8,6 +8,7 @@ import {
 	Setting,
 	TFile,
 	WorkspaceLeaf,
+	normalizePath,
 } from "obsidian";
 
 interface FindProjectNoteSetting {
@@ -46,6 +47,11 @@ export default class FindProjectNotePlugin extends Plugin {
 			id: "open-moc-note",
 			name: "Open map of content note",
 			callback: () => this.openFindingNote(TagType.MOC),
+		});
+		this.addCommand({
+			id: "create-hoc-fleeting-note",
+			name: "Create HOC fleeting note",
+			callback: () => this.createFleetingNote(),
 		});
 		this.addSettingTab(new FindProjectNoteSettingTab(this.app, this));
 
@@ -128,6 +134,91 @@ export default class FindProjectNotePlugin extends Plugin {
 		}
 		return false;
 	};
+
+	async createFleetingNote() {
+		/**
+		 * 1. 현재 활성화된 파일의 경로를 가져온다.
+		 * 2. 파일의 상위 폴더 노트에 HOC 테그가 있는지 확인한다.
+		 * 3. HOC 테그가 있는 경위에 fleeting 폴더가 있는지 확인한다.
+		 * 3-1. 없으면 fleeting 폴더를 만든다.
+		 * 4. fleeting 폴더에 fleeting note를 만든다.
+		 * 5. fleeting note를 열고 활성화한다.
+		 */
+
+		const activeFile = this.app.workspace.getActiveFile();
+		if (!activeFile) {
+			return; // 활성 파일이 없는 경우 종료
+		}
+
+		// @ts-ignore
+		const __dirname = this.app.vault.adapter.basePath;
+		const pathParts = activeFile.path.split("/");
+		const pathPartsLastIndex = pathParts.length - 1;
+		// new Notice(`pathParts: ${pathParts}`, 5000);
+
+		for (let i = pathPartsLastIndex; i >= 0; i--) {
+			if (i === 1) {
+				break;
+			}
+			const filename = `${pathParts[i - 1]}.md`;
+			const projectNote =
+				pathParts.slice(0, i).join("/") + `/${filename}`;
+			const projectNotePath = `${__dirname}/${projectNote}`;
+			// new Notice(`projectNote: ${projectNotePath} exist: ${fs.existsSync(projectNotePath)}`,5000);
+
+			if (fs.existsSync(projectNotePath)) {
+				const isFolderNote = await this.checkForTypeTag(
+					projectNotePath,
+					TagType.HOC
+				);
+				// new Notice(`isFolderNote: ${isFolderNote}`, 5000);
+
+				if (isFolderNote) {
+					this.createFleetingNoteInFolder(projectNote);
+					return;
+				}
+			}
+		}
+		this.createFleetingNoteInFolder("/");
+	}
+
+	async createFleetingNoteInFolder(projectNotePath: string) {
+		// new Notice(`HOC note path: ${projectNotePath}`, 5000);
+		const fleetingNoteDir = `${projectNotePath.slice(
+			0,
+			projectNotePath.lastIndexOf("/")
+		)}/${this.settings.fleetingNoteFolderName}`;
+		// new Notice(`Fleeting note path: ${fleetingNoteDir}`, 5000);
+
+		try {
+			const directoryExists = await this.app.vault.adapter.exists(
+				fleetingNoteDir
+			);
+			// new Notice(`directoryExists: ${directoryExists}`, 5000);
+			if (!directoryExists) {
+				await this.app.vault.adapter.mkdir(
+					normalizePath(fleetingNoteDir)
+				);
+			}
+
+			const _fleetingNotePath = `${fleetingNoteDir}/무제 파일`;
+			let fleetingNotePath = `${_fleetingNotePath}.md`;
+			let i = 1;
+			while (await this.app.vault.adapter.exists(fleetingNotePath)) {
+				fleetingNotePath = `${_fleetingNotePath}${i}.md`;
+				i++;
+			}
+
+			const tfile = await this.app.vault.create(fleetingNotePath, "");
+			const leaf = this.app.workspace.getLeaf(true);
+			await leaf.openFile(tfile);
+		} catch (error) {
+			new Notice(
+				`Error creating fleeting note: ${error.toString()}`,
+				5000
+			);
+		}
+	}
 
 	async openFindingNote(type: TagType) {
 		const activeFile = this.app.workspace.getActiveFile();
