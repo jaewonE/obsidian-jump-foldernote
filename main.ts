@@ -1,14 +1,27 @@
 import * as fs from "fs";
-import { App, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
+import {
+	App,
+	MarkdownView,
+	Notice,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+	TFile,
+	WorkspaceLeaf,
+} from "obsidian";
 
 interface FindProjectNoteSetting {
 	HocTag: string;
 	MocTag: string;
+	forceReadingViewTags: string[];
+	debounceTimeout: number;
 }
 
 const DEFAULT_SETTINGS: FindProjectNoteSetting = {
 	HocTag: "HOC",
 	MocTag: "MOC",
+	forceReadingViewTags: ["HOC", "MOC"],
+	debounceTimeout: 300,
 };
 
 enum TagType {
@@ -33,6 +46,18 @@ export default class FindProjectNotePlugin extends Plugin {
 			callback: () => this.openFindingNote(TagType.MOC),
 		});
 		this.addSettingTab(new FindProjectNoteSettingTab(this.app, this));
+
+		this.registerEvent(
+			this.app.workspace.on("file-open", async (file: TFile) => {
+				const leaf = this.app.workspace.getLeaf(false);
+				const tfile = this.app.workspace.getActiveFile();
+				if (leaf && tfile) {
+					await leaf.openFile(tfile, { active: true });
+					await this.forceReadingView(leaf);
+					// new Notice(`tfile path: ${tfile.path}`, 5000);
+				}
+			})
+		);
 	}
 
 	async loadSettings() {
@@ -46,6 +71,59 @@ export default class FindProjectNotePlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+
+	async checkForContainingTags(
+		view: MarkdownView,
+		allowTags: string[]
+	): Promise<boolean> {
+		try {
+			const fileContent = view.editor.getValue();
+			// 파일 내용에서 첫 번째 "---"로 시작하는 블록을 찾음
+			const frontMatterBlock = fileContent.match(/^---\n([\s\S]*?)\n---/);
+			if (!frontMatterBlock) {
+				return false;
+			}
+
+			if (frontMatterBlock) {
+				// YAML 형태의 문자열에서 "tags:" 이후의 내용을 추출
+				const tagsMatch =
+					frontMatterBlock[1].match(/tags:\n(.*?)\n(?=\w)/s);
+				if (tagsMatch) {
+					// "tags" 섹션에서 각 태그를 배열로 변환
+					const tags = tagsMatch[1]
+						.split("\n")
+						.map((tag) => tag.trim().replace(/^- /, ""));
+					// new Notice(`tags: ${tags}`, 5000);
+					// 태그 중 하나라도 allowTags 배열에 포함되어 있으면 true 반환
+					if (tags.some((tag) => allowTags.includes(tag))) {
+						return true;
+					}
+				}
+			}
+			return false;
+		} catch (error) {
+			console.error(`Error reading file: ${error}`);
+		}
+		return false;
+	}
+
+	forceReadingView = async (leaf: WorkspaceLeaf) => {
+		const view = leaf.view instanceof MarkdownView ? leaf.view : null;
+		if (view) {
+			const containTags = await this.checkForContainingTags(
+				view,
+				this.settings.forceReadingViewTags
+			);
+			// new Notice(`containTags: ${containTags}`, 5000);
+
+			// reading view 일때 mode: preview / soruce: false
+			// editing view 일때 mode: source / source: false
+			const state = leaf.getViewState();
+			state.state["mode"] = containTags ? "preview" : "source";
+			// new Notice(`state: ${state.state["mode"]}`, 5000);
+			await leaf.setViewState(state);
+		}
+	};
 
 	async openFindingNote(type: TagType) {
 		const activeFile = this.app.workspace.getActiveFile();
@@ -70,7 +148,7 @@ export default class FindProjectNotePlugin extends Plugin {
 			// new Notice(`projectNote: ${projectNotePath} exist: ${fs.existsSync(projectNotePath)}`,5000);
 
 			if (fs.existsSync(projectNotePath)) {
-				const isFolderNote = await this.checkForTag(
+				const isFolderNote = await this.checkForTypeTag(
 					projectNotePath,
 					type
 				);
@@ -107,13 +185,13 @@ export default class FindProjectNotePlugin extends Plugin {
 		}
 	}
 
-	async checkForTag(filePath: string, type: TagType): Promise<boolean> {
+	async getTags(filePath: string): Promise<string[]> {
 		try {
 			const fileContent = await fs.promises.readFile(filePath, "utf-8");
 			// 파일 내용에서 첫 번째 "---"로 시작하는 블록을 찾음
 			const frontMatterBlock = fileContent.match(/^---\n([\s\S]*?)\n---/);
 			if (!frontMatterBlock) {
-				return false;
+				return [];
 			}
 
 			if (frontMatterBlock) {
@@ -127,20 +205,29 @@ export default class FindProjectNotePlugin extends Plugin {
 						.map((tag) => tag.trim().replace(/^- /, ""));
 					// new Notice(`tags: ${tags}`, 5000);
 
-					switch (type) {
-						case TagType.HOC:
-							return tags.includes(this.settings.HocTag);
-						case TagType.MOC:
-							return tags.includes(this.settings.MocTag);
-						default:
-							return false;
-					}
+					return tags;
 				}
 			}
 		} catch (error) {
 			console.error(`Error reading file: ${error}`);
 		}
-		return false;
+		return [];
+	}
+
+	async checkForTypeTag(filePath: string, type: TagType): Promise<boolean> {
+		const tags = await this.getTags(filePath);
+		if (tags.length === 0) {
+			return false;
+		}
+
+		switch (type) {
+			case TagType.HOC:
+				return tags.includes(this.settings.HocTag);
+			case TagType.MOC:
+				return tags.includes(this.settings.MocTag);
+			default:
+				return false;
+		}
 	}
 }
 
@@ -179,6 +266,44 @@ class FindProjectNoteSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.MocTag)
 					.onChange(async (value) => {
 						this.plugin.settings.MocTag = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Force Reading View Tags")
+			.setDesc(
+				"Enter the tags to set the files you want to force to view in reading view, separated by commas. (EX: MOC, HOC)"
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder(
+						DEFAULT_SETTINGS.forceReadingViewTags.join(", ")
+					)
+					.setValue(
+						String(
+							this.plugin.settings.forceReadingViewTags.join(", ")
+						)
+					)
+					.onChange(async (value) => {
+						this.plugin.settings.forceReadingViewTags = value
+							.split(",")
+							.map((tag) => tag.replace("#", "").trim());
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("DebounceTimeout")
+			.setDesc(
+				"Set the debounce timeout for the active leaf change event. (0 for no debounce)"
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder(DEFAULT_SETTINGS.debounceTimeout.toString())
+					.setValue(String(this.plugin.settings.debounceTimeout))
+					.onChange(async (value) => {
+						this.plugin.settings.debounceTimeout = parseInt(value);
 						await this.plugin.saveSettings();
 					})
 			);
