@@ -15,6 +15,7 @@ interface FindProjectNoteSetting {
 	MocTag: string;
 	forceReadingViewTags: string[];
 	debounceTimeout: number;
+	fleetingNoteFolderName: string;
 }
 
 const DEFAULT_SETTINGS: FindProjectNoteSetting = {
@@ -22,6 +23,7 @@ const DEFAULT_SETTINGS: FindProjectNoteSetting = {
 	MocTag: "MOC",
 	forceReadingViewTags: ["HOC", "MOC"],
 	debounceTimeout: 300,
+	fleetingNoteFolderName: "00.Fleeting",
 };
 
 enum TagType {
@@ -52,8 +54,8 @@ export default class FindProjectNotePlugin extends Plugin {
 				const leaf = this.app.workspace.getLeaf(false);
 				const tfile = this.app.workspace.getActiveFile();
 				if (leaf && tfile) {
-					await leaf.openFile(tfile, { active: true });
 					await this.forceReadingView(leaf);
+					await leaf.openFile(tfile, { active: true });
 					// new Notice(`tfile path: ${tfile.path}`, 5000);
 				}
 			})
@@ -107,7 +109,7 @@ export default class FindProjectNotePlugin extends Plugin {
 		return false;
 	}
 
-	forceReadingView = async (leaf: WorkspaceLeaf) => {
+	forceReadingView = async (leaf: WorkspaceLeaf): Promise<boolean> => {
 		const view = leaf.view instanceof MarkdownView ? leaf.view : null;
 		if (view) {
 			const containTags = await this.checkForContainingTags(
@@ -122,7 +124,9 @@ export default class FindProjectNotePlugin extends Plugin {
 			state.state["mode"] = containTags ? "preview" : "source";
 			// new Notice(`state: ${state.state["mode"]}`, 5000);
 			await leaf.setViewState(state);
+			return containTags;
 		}
+		return false;
 	};
 
 	async openFindingNote(type: TagType) {
